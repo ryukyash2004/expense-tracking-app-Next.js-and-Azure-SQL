@@ -19,6 +19,19 @@ export default function Home() {
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+// ADD THESE NEW STATES (for OCR feature):
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [extractedData, setExtractedData] = useState<any>(null);
+  const [showPreview, setShowPreview] = useState(false);
+// For preview/edit
+  const [previewMerchant, setPreviewMerchant] = useState('');
+  const [previewAmount, setPreviewAmount] = useState('');
+  const [previewDate, setPreviewDate] = useState('');
+  const [previewCategory, setPreviewCategory] = useState('');
+  const [previewNotes, setPreviewNotes] = useState('');
+
+ 
 
   const USER_ID = "070F3151-40CF-4CDE-A447-941424ACF998";
 
@@ -91,6 +104,124 @@ export default function Home() {
     }
   };
 
+// Handle file selection
+const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  if (e.target.files && e.target.files[0]) {
+    setSelectedFile(e.target.files[0]);
+    setShowPreview(false);
+    setExtractedData(null);
+  }
+};
+
+// Handle OCR extraction
+const handleExtractData = async () => {
+  if (!selectedFile) {
+    alert('Please select a receipt image first');
+    return;
+  }
+
+  try {
+    setUploading(true);
+
+    // Convert image to base64 or upload to temp storage
+    // For now, we'll use a simple approach with FormData
+    const formData = new FormData();
+    formData.append('image', selectedFile);
+
+    // First, upload image to get a URL (we'll use a simple base64 approach)
+    const reader = new FileReader();
+    
+    reader.onloadend = async () => {
+      const base64String = reader.result as string;
+      
+      // Call OCR API
+      const response = await fetch('/api/ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageUrl: base64String, // We'll handle base64 in API
+        }),
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        // Set extracted data to preview
+        setExtractedData(result.data);
+        setPreviewMerchant(result.data.merchant || '');
+        setPreviewAmount(result.data.amount?.toString() || '');
+        setPreviewDate(result.data.date || '');
+        setPreviewCategory(result.data.category || '');
+        setPreviewNotes(`Receipt from ${result.data.merchant || 'merchant'}`);
+        setShowPreview(true);
+        
+        alert('Data extracted! Please review and confirm below.');
+      } else {
+        alert('Failed to extract data: ' + result.message);
+      }
+      
+      setUploading(false);
+    };
+
+    reader.readAsDataURL(selectedFile);
+
+  } catch (err) {
+    console.error('OCR error:', err);
+    alert('Error processing receipt');
+    setUploading(false);
+  }
+};
+
+// Handle confirming and adding the expense from preview
+const handleConfirmAndAdd = async () => {
+  if (!previewAmount || !previewDate || !previewCategory) {
+    alert('Please fill in amount, date, and category');
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/expenses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: USER_ID,
+        category: previewCategory,
+        amount: parseFloat(previewAmount),
+        expense_date: previewDate,
+        notes: previewNotes || null,
+      }),
+    });
+
+    if (response.ok) {
+      // Clear everything
+      setSelectedFile(null);
+      setShowPreview(false);
+      setExtractedData(null);
+      setPreviewMerchant('');
+      setPreviewAmount('');
+      setPreviewDate('');
+      setPreviewCategory('');
+      setPreviewNotes('');
+      
+      // Refresh expense list
+      fetchExpenses();
+      
+      alert('Expense added successfully from receipt!');
+    } else {
+      alert('Failed to add expense');
+    }
+  } catch (err) {
+    console.error(err);
+    alert('Error adding expense');
+  }
+};
+
+// Handle canceling preview
+const handleCancelPreview = () => {
+  setShowPreview(false);
+  setExtractedData(null);
+  setSelectedFile(null);
+};
   return (
     <main className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 py-10 px-4">
       <div className="max-w-5xl mx-auto">
@@ -103,7 +234,142 @@ export default function Home() {
             Track your daily expenses with ease
           </p>
         </header>
+        {/* Receipt Upload Section - NEW! */}
+<div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg shadow-md p-6 mb-8 border-2 border-purple-200">
+  <h2 className="text-2xl font-semibold mb-4 text-purple-800">
+    📸 Upload Receipt (AI Powered)
+  </h2>
+  
+  <div className="space-y-4">
+    {/* File Upload */}
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-2">
+        Select Receipt Image
+      </label>
+      <input
+        type="file"
+        accept="image/*"
+        onChange={handleFileSelect}
+        className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-purple-600 file:text-white hover:file:bg-purple-700"
+      />
+      {selectedFile && (
+        <p className="mt-2 text-sm text-gray-600">
+          Selected: {selectedFile.name}
+        </p>
+      )}
+    </div>
 
+    {/* Extract Button */}
+    <button
+      onClick={handleExtractData}
+      disabled={!selectedFile || uploading}
+      className="w-full bg-purple-600 text-white py-2 px-4 rounded-md hover:bg-purple-700 transition-colors font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
+    >
+      {uploading ? '🔄 Extracting Data...' : '✨ Extract Data with AI'}
+    </button>
+
+    {/* Preview/Confirmation Box */}
+    {showPreview && extractedData && (
+      <div className="mt-6 p-4 bg-white rounded-lg border-2 border-green-300 shadow-sm">
+        <h3 className="text-lg font-semibold text-green-800 mb-4">
+          ✓ Extracted Data - Review & Edit
+        </h3>
+        
+        <div className="space-y-3">
+          {/* Merchant */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Merchant
+            </label>
+            <input
+              type="text"
+              value={previewMerchant}
+              onChange={(e) => setPreviewMerchant(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+              placeholder="Store/Merchant name"
+            />
+          </div>
+
+          {/* Category */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Category *
+            </label>
+            <input
+              type="text"
+              value={previewCategory}
+              onChange={(e) => setPreviewCategory(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+              placeholder="e.g., Food, Transport"
+              required
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            {/* Amount */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Amount ($) *
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                value={previewAmount}
+                onChange={(e) => setPreviewAmount(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                required
+              />
+            </div>
+
+            {/* Date */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Date *
+              </label>
+              <input
+                type="date"
+                value={previewDate}
+                onChange={(e) => setPreviewDate(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                required
+              />
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Notes
+            </label>
+            <input
+              type="text"
+              value={previewNotes}
+              onChange={(e) => setPreviewNotes(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+              placeholder="Optional notes"
+            />
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex gap-3 mt-4">
+            <button
+              onClick={handleConfirmAndAdd}
+              className="flex-1 bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 transition-colors font-medium"
+            >
+              ✓ Confirm & Add Expense
+            </button>
+            <button
+              onClick={handleCancelPreview}
+              className="flex-1 bg-gray-500 text-white py-2 px-4 rounded-md hover:bg-gray-600 transition-colors font-medium"
+            >
+              ✗ Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+  </div>
+</div>
         {/* Add Expense Form */}
         <section className="backdrop-blur-md bg-white/70 rounded-2xl shadow-lg border border-white/40 p-8 mb-10">
           <h2 className="text-2xl font-semibold text-gray-800 mb-6">
